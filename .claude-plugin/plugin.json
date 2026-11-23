@@ -1,0 +1,21 @@
+{
+  "name": "glossary",
+  "version": "0.1.0",
+  "description": "대화에서 정의한 용어를 모아 두는 용어집 패널. 세션 한정 또는 프로젝트별 보관.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "openOnStart": {
+      "type": "boolean",
+      "title": "시작할 때 열기",
+      "description": "세션을 시작할 때 용어집 패널을 자동으로 엽니다.",
+      "default": false
+    },
+    "defaultScope": {
+      "type": "string",
+      "title": "기본 보관 범위",
+      "description": "범위를 정하지 않고 추가한 용어를 이 세션에만 둘지(session), 프로젝트에 보관할지(project).",
+      "options": ["session", "project"],
+      "default": "session"
+    }
+  }
+}

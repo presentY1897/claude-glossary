@@ -1,0 +1,5 @@
+{
+  "name": "claude-glossary",
+  "owner": { "name": "presentY1897" },
+  "plugins": [{ "name": "glossary", "source": "./" }]
+}
