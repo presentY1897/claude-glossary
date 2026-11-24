@@ -26,7 +26,7 @@ claude plugin install glossary --marketplace presentY1897/claude-glossary
 
 | 명령 | 동작 |
 | --- | --- |
-| `/glossary` | 패널 열기 |
+| `/glossary` | 패널을 열고 포커스 주기 |
 | `/glossary close` | 패널 닫기 |
 | `/glossary add 용어: 정의` | 용어 추가 (같은 용어는 덮어씀) |
 | `/glossary rm 용어` | 용어 삭제 |

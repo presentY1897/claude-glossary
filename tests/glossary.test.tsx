@@ -86,6 +86,14 @@ test('a project term is stored, and read back at the next start', async ($, on) 
     { term: 'band', definition: '프롬프트 위의 띠' },
   ])
 
+  // The model removes a term, a kept one from the store too.
+  await $.tool.call({ tool: 'mcp__glossary__define', term: 'tmp', definition: 'x', scope: 'project' })
+  const removed = await $.tool.call({ tool: 'mcp__glossary__remove', term: 'TMP' })
+  expect(removed.result).toBe('Removed "tmp" from the glossary.')
+  expect((store.get(KEY) as unknown[]).length).toBe(2)
+  const missing = await $.tool.call({ tool: 'mcp__glossary__remove', term: 'nope' })
+  expect(missing.deny).toBe('The glossary has no term "nope".')
+
   const listed = await $.tool.call({ tool: 'mcp__glossary__list' })
   expect(listed.result).toBe(
     'pane [project]: 옆에 떠 있는 패널\nband [project]: 프롬프트 위의 띠',

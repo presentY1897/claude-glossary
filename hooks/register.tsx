@@ -7,6 +7,7 @@ const PANE = 'glossary'
 const TITLE = '용어집'
 const DEFINE = 'mcp__glossary__define'
 const LIST = 'mcp__glossary__list'
+const REMOVE = 'mcp__glossary__remove'
 const UNFILED = '미분류'
 const USAGE = [
   '/glossary                      패널 열기',
@@ -137,6 +138,19 @@ export const register: Register = (on, options) => {
       isDeferred: false,
     })
     await $.tool.register({
+      name: 'remove',
+      description:
+        "Removes a term from the user's glossary, a term kept for the project included. Call it when the user asks for a term to be deleted, or when a term was recorded by mistake. To change a term's definition, chapter or scope, call define again instead.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          term: { type: 'string', description: 'The term to remove.' },
+        },
+        required: ['term'],
+      },
+      isDeferred: false,
+    })
+    await $.tool.register({
       name: 'list',
       description:
         "Lists every term in the user's glossary with its definition, scope and chapter, including terms kept for this project in earlier sessions. Read it before relying on a project term you were not told the meaning of, and before choosing a chapter for a new term.",
@@ -169,7 +183,9 @@ export const register: Register = (on, options) => {
     const say = (text: string) => ({ text, isTextDisplayOnly: true as const })
 
     if (verb === '') {
-      await $.ui.open({ id: PANE, title: TITLE })
+      // Typed by the person, so the pane takes the keys: no chord or click
+      // is needed to walk it, and Escape hands them back.
+      await $.ui.open({ id: PANE, title: TITLE, focus: true })
 
       return say('용어집을 열었습니다.')
     }
@@ -244,6 +260,21 @@ export const register: Register = (on, options) => {
     $.ui.toast(`용어집에 추가: ${term}`)
 
     return { result: `Recorded "${term}" in the glossary (${scope}).` }
+  })
+
+  on('tool.call', { tool: REMOVE }, async ($, e) => {
+    const { term } = e as unknown as Record<string, unknown>
+    const found = typeof term === 'string' ? await find($, term) : undefined
+    if (found === undefined)
+      return { deny: `The glossary has no term "${String(term)}".` }
+
+    await update($, terms, list =>
+      list.filter(one => !isSame(one.term, found.term)),
+    )
+    await persist($)
+    $.ui.toast(`용어집에서 삭제: ${found.term}`)
+
+    return { result: `Removed "${found.term}" from the glossary.` }
   })
 
   on('tool.call', { tool: LIST }, async $ => {
