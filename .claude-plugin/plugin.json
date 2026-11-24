@@ -1,6 +1,6 @@
 {
   "name": "glossary",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "대화에서 정의한 용어를 모아 두는 용어집 패널. 세션 한정 또는 프로젝트별 보관.",
   "types": "./types/index.d.ts",
   "userConfig": {
