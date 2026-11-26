@@ -70,37 +70,68 @@ const kept = async ($: EngineInterface): Promise<GlossaryTerm[]> => {
   })
 }
 
-const persist = async ($: EngineInterface) => {
-  const list = await read($, terms)
+const find = async ($: EngineInterface, name: string) =>
+  (await read($, terms)).find(one => isSame(one.term, name))
+
+// The session's terms stay; the project's are whatever the store holds now.
+const refresh = async ($: EngineInterface) => {
+  const saved = await kept($)
+
+  await update($, terms, list => [
+    ...list.filter(
+      one =>
+        one.scope === 'session' &&
+        !saved.some(other => isSame(other.term, one.term)),
+    ),
+    ...saved,
+  ])
+}
+
+// Writes one term's change over the store as it stands, not the whole of this
+// session's list: another session of the project may have kept terms since.
+const sync = async ($: EngineInterface, name: string) => {
+  const now = await find($, name)
+  const rest = (await kept($)).filter(one => !isSame(one.term, name))
 
   await $.store.set(
     await storeKey($),
-    list
-      .filter(one => one.scope === 'project')
-      .map(({ term, definition, chapter }) =>
+    [...rest, ...(now?.scope === 'project' ? [now] : [])].map(
+      ({ term, definition, chapter }) =>
         chapter === undefined ? { term, definition } : { term, definition, chapter },
-      ),
+    ),
   )
+  await refresh($)
 }
 
-// A term defined again keeps its chapter unless the new entry names one;
-// an empty chapter unfiles it.
-const put = async ($: EngineInterface, entry: GlossaryTerm) => {
-  await update($, terms, list => {
-    const before = list.find(one => isSame(one.term, entry.term))
-    const chapter = (entry.chapter ?? before?.chapter ?? '').trim()
-    const { chapter: _dropped, ...rest } = entry
+type Entry = Omit<GlossaryTerm, 'scope'> & { scope?: GlossaryScope }
 
-    return [
-      ...list.filter(one => !isSame(one.term, entry.term)),
-      chapter === '' ? rest : { ...rest, chapter },
-    ]
-  })
-  await persist($)
+// A term defined again keeps its chapter and its scope unless the new entry
+// names one; an empty chapter unfiles it.
+const put = async (
+  $: EngineInterface,
+  entry: Entry,
+  fallback: GlossaryScope,
+): Promise<GlossaryTerm> => {
+  const before = await find($, entry.term)
+  const chapter = (entry.chapter ?? before?.chapter ?? '').trim()
+  const scope = entry.scope ?? before?.scope ?? fallback
+  const { term, definition } = entry
+  const stored: GlossaryTerm =
+    chapter === '' ? { term, definition, scope } : { term, definition, scope, chapter }
+
+  await update($, terms, list => [
+    ...list.filter(one => !isSame(one.term, term)),
+    stored,
+  ])
+  await sync($, term)
+
+  return stored
 }
 
-const find = async ($: EngineInterface, name: string) =>
-  (await read($, terms)).find(one => isSame(one.term, name))
+const drop = async ($: EngineInterface, name: string) => {
+  await update($, terms, list => list.filter(one => !isSame(one.term, name)))
+  await sync($, name)
+}
 
 export const register: Register = (on, options) => {
   const defaultScope = scopeOf(options.defaultScope, 'session')
@@ -130,7 +161,7 @@ export const register: Register = (on, options) => {
             type: 'string',
             enum: ['session', 'project'],
             description:
-              "'session' keeps it for this conversation only; 'project' keeps it across sessions for this project folder. Leave out to use the user's default.",
+              "'session' keeps it for this conversation only; 'project' keeps it across sessions for this project folder. Leave out to keep the term's scope, or for a new term to use the user's default.",
           },
         },
         required: ['term', 'definition'],
@@ -158,17 +189,10 @@ export const register: Register = (on, options) => {
     })
 
     // A reload keeps the session's terms; the project's are read afresh.
-    const saved = await kept($)
-    await update($, terms, list => [
-      ...list.filter(
-        one =>
-          one.scope === 'session' &&
-          !saved.some(other => isSame(other.term, one.term)),
-      ),
-      ...saved,
-    ])
+    await refresh($)
 
-    if (options.openOnStart === true) void $.ui.open({ id: PANE, title: TITLE })
+    if (options.openOnStart === true)
+      void $.ui.open({ id: PANE, title: TITLE }).catch(() => undefined)
 
     return next(e)
   })
@@ -198,33 +222,54 @@ export const register: Register = (on, options) => {
 
     if (verb === 'add') {
       if (head === '' || tail === '') return say(USAGE)
-      await put($, { term: head, definition: tail, scope: defaultScope })
+      const stored = await put($, { term: head, definition: tail }, defaultScope)
 
       return say(
-        `추가: ${head} (${defaultScope === 'project' ? '프로젝트 보관' : '이 세션'})`,
+        `추가: ${head} (${stored.scope === 'project' ? '프로젝트 보관' : '이 세션'})`,
       )
     }
 
-    if (['rm', 'chapter', 'keep', 'unkeep'].includes(verb)) {
-      const found = head === '' ? undefined : await find($, head)
-      if (found === undefined) return say(`용어집에 없는 용어입니다: ${head}`)
+    if (verb === 'chapter') {
+      if (body === '') return say(USAGE)
+      // A term may hold a colon itself: the whole line first (no chapter, so
+      // unfile), then the last colon, then the first.
+      const last = Math.max(body.lastIndexOf(':'), body.lastIndexOf('：'))
+      const splits: [string, string][] = [
+        [body, ''],
+        ...(cut < 0
+          ? []
+          : ([
+              [body.slice(0, last).trim(), body.slice(last + 1).trim()],
+              [head, tail],
+            ] as [string, string][])),
+      ]
+      for (const [name, chapter] of splits) {
+        const found = name === '' ? undefined : await find($, name)
+        if (found === undefined) continue
+        await put($, { ...found, chapter }, defaultScope)
+
+        return say(`${found.term} → ${chapter === '' ? UNFILED : chapter}`)
+      }
+
+      return say(`용어집에 없는 용어입니다: ${head}`)
+    }
+
+    if (['rm', 'keep', 'unkeep'].includes(verb)) {
+      if (body === '') return say(USAGE)
+      const found = await find($, body)
+      if (found === undefined) return say(`용어집에 없는 용어입니다: ${body}`)
 
       if (verb === 'rm') {
-        await update($, terms, list =>
-          list.filter(one => !isSame(one.term, found.term)),
-        )
-        await persist($)
+        await drop($, found.term)
 
         return say(`삭제: ${found.term}`)
       }
 
-      if (verb === 'chapter') {
-        await put($, { ...found, chapter: tail })
-
-        return say(`${found.term} → ${tail === '' ? UNFILED : tail}`)
-      }
-
-      await put($, { ...found, scope: verb === 'keep' ? 'project' : 'session' })
+      await put(
+        $,
+        { ...found, scope: verb === 'keep' ? 'project' : 'session' },
+        defaultScope,
+      )
 
       return say(
         verb === 'keep'
@@ -246,17 +291,12 @@ export const register: Register = (on, options) => {
     if (term === '' || definition === '')
       return { deny: 'define needs a term and a definition.' }
 
-    const scope = scopeOf(input.scope, defaultScope)
-    const chapter =
-      typeof input.chapter === 'string' && input.chapter.trim() !== ''
-        ? input.chapter.trim()
-        : undefined
-    await put(
-      $,
-      chapter === undefined
-        ? { term, definition, scope }
-        : { term, definition, scope, chapter },
-    )
+    const entry: Entry = { term, definition }
+    if (input.scope === 'project' || input.scope === 'session')
+      entry.scope = input.scope
+    if (typeof input.chapter === 'string' && input.chapter.trim() !== '')
+      entry.chapter = input.chapter.trim()
+    const { scope } = await put($, entry, defaultScope)
     $.ui.toast(`용어집에 추가: ${term}`)
 
     return { result: `Recorded "${term}" in the glossary (${scope}).` }
@@ -264,14 +304,13 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: REMOVE }, async ($, e) => {
     const { term } = e as unknown as Record<string, unknown>
-    const found = typeof term === 'string' ? await find($, term) : undefined
+    if (typeof term !== 'string' || term.trim() === '')
+      return { deny: 'remove needs a term.' }
+    const found = await find($, term)
     if (found === undefined)
-      return { deny: `The glossary has no term "${String(term)}".` }
+      return { deny: `The glossary has no term "${term.trim()}".` }
 
-    await update($, terms, list =>
-      list.filter(one => !isSame(one.term, found.term)),
-    )
-    await persist($)
+    await drop($, found.term)
     $.ui.toast(`용어집에서 삭제: ${found.term}`)
 
     return { result: `Removed "${found.term}" from the glossary.` }
@@ -288,7 +327,8 @@ export const register: Register = (on, options) => {
               .map(one => {
                 const tags = [one.scope, one.chapter].filter(Boolean).join(', ')
 
-                return `${one.term} [${tags}]: ${one.definition}`
+                // One term to a line, whatever its definition holds.
+                return `${one.term} [${tags}]: ${one.definition.replace(/\s*\n\s*/g, ' ')}`
               })
               .join('\n'),
     }
@@ -347,7 +387,9 @@ export const register: Register = (on, options) => {
           <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
             {tabs.map(one => (
               <Button
-                key={`tab:${one.id ?? '*'}`}
+                key={
+                  one.id === null ? 'all' : one.id === '' ? 'unfiled' : `tab:${one.id}`
+                }
                 plain
                 onPress={() => set({ chapter: one.id, page: 0, open: null })}
               >

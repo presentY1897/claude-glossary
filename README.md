@@ -28,7 +28,7 @@ claude plugin install glossary --marketplace presentY1897/claude-glossary
 | --- | --- |
 | `/glossary` | 패널을 열고 포커스 주기 |
 | `/glossary close` | 패널 닫기 |
-| `/glossary add 용어: 정의` | 용어 추가 (같은 용어는 덮어씀) |
+| `/glossary add 용어: 정의` | 용어 추가 (같은 용어는 정의만 덮어쓰고 챕터와 보관 범위는 유지) |
 | `/glossary rm 용어` | 용어 삭제 |
 | `/glossary chapter 용어: 챕터` | 챕터 지정 (챕터를 비우면 미분류) |
 | `/glossary keep 용어` | 프로젝트에 보관 |
@@ -52,7 +52,7 @@ claude plugin install glossary --marketplace presentY1897/claude-glossary
 | 항목 | 기본값 | 설명 |
 | --- | --- | --- |
 | 시작할 때 열기 (`openOnStart`) | 꺼짐 | 세션을 시작할 때 패널을 자동으로 엽니다. 터미널에서는 폭이 144열 이상일 때 자리 잡습니다. |
-| 기본 보관 범위 (`defaultScope`) | `session` | 범위를 정하지 않고 추가한 용어를 어디에 둘지 정합니다. |
+| 기본 보관 범위 (`defaultScope`) | `session` | 범위를 정하지 않고 추가한 새 용어를 어디에 둘지 정합니다. 이미 있는 용어는 원래 범위를 유지합니다. |
 
 ## 개발
 

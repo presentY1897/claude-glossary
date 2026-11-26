@@ -169,3 +169,88 @@ test('a long glossary is paged', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /^t01$/ })).toBeUndefined()
   await ui.unmount()
 })
+
+test('a kept term defined again stays kept', async ($, on) => {
+  const store = world(on, { [KEY]: [{ term: 'pane', definition: 'old' }] })
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+
+  const ran = await $.tool.call({
+    tool: 'mcp__glossary__define',
+    term: 'pane',
+    definition: 'new',
+  })
+  expect(ran.result).toBe('Recorded "pane" in the glossary (project).')
+  expect(store.get(KEY)).toEqual([{ term: 'pane', definition: 'new' }])
+
+  // Naming the scope still moves it.
+  await $.tool.call({
+    tool: 'mcp__glossary__define',
+    term: 'pane',
+    definition: 'new',
+    scope: 'session',
+  })
+  expect(store.get(KEY)).toEqual([])
+})
+
+test('terms another session kept meanwhile are not written over', async ($, on) => {
+  const store = world(on, { [KEY]: [{ term: 'a', definition: '1' }] })
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  store.set(KEY, [
+    { term: 'a', definition: '1' },
+    { term: 'theirs', definition: '2' },
+  ])
+
+  await $.tool.call({
+    tool: 'mcp__glossary__define',
+    term: 'mine',
+    definition: '3',
+    scope: 'project',
+  })
+  expect(store.get(KEY)).toEqual([
+    { term: 'a', definition: '1' },
+    { term: 'theirs', definition: '2' },
+    { term: 'mine', definition: '3' },
+  ])
+  // And this session now lists theirs too.
+  const listed = await $.tool.call({ tool: 'mcp__glossary__list' })
+  expect(listed.result).toBe('a [project]: 1\ntheirs [project]: 2\nmine [project]: 3')
+})
+
+test('the command adds, files, keeps and removes, a term with a colon too', async ($, on) => {
+  const store = world(on)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  const run = async (args: string) =>
+    (
+      await $.command.run({
+        command: 'glossary',
+        args,
+        origin: { kind: 'composer' },
+        presentation: { isFullscreen: true, columns: 160 },
+      })
+    ).text
+  const list = async () => (await $.tool.call({ tool: 'mcp__glossary__list' })).result
+
+  expect(await run('add mod: 플러그인: 훅 모듈')).toBe('추가: mod (이 세션)')
+  await $.tool.call({ tool: 'mcp__glossary__define', term: 'std::vector', definition: 'x' })
+
+  expect(await run('chapter std::vector: c++')).toBe('std::vector → c++')
+  expect(await run('chapter mod：화면')).toBe('mod → 화면')
+  expect(await list()).toBe(
+    'std::vector [session, c++]: x\nmod [session, 화면]: 플러그인: 훅 모듈',
+  )
+  expect(await run('chapter std::vector')).toBe('std::vector → 미분류')
+
+  expect(await run('keep std::vector')).toBe('프로젝트에 보관: std::vector')
+  expect(store.get(KEY)).toEqual([{ term: 'std::vector', definition: 'x' }])
+  expect(await run('unkeep std::vector')).toBe('이 세션에만 둠: std::vector')
+  expect(store.get(KEY)).toEqual([])
+
+  // Added again, a kept term stays kept, and stays filed.
+  await run('keep mod')
+  expect(await run('add mod: 새 정의')).toBe('추가: mod (프로젝트 보관)')
+  expect(store.get(KEY)).toEqual([{ term: 'mod', definition: '새 정의', chapter: '화면' }])
+
+  expect(await run('rm std::vector')).toBe('삭제: std::vector')
+  expect(await run('rm nope')).toBe('용어집에 없는 용어입니다: nope')
+  expect(await run('rm')).toMatch(/^\/glossary /)
+})
